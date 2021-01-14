@@ -23,7 +23,7 @@ const resolveApp = relativePath => path.resolve(appDirectory, relativePath);
 // single-page apps that may serve index.html for nested URLs like /todos/42.
 // We can't use a relative path in HTML because we don't want to load something
 // like /todos/42/static/js/bundle.7289d.js. We have to know the root.
-const publicUrlOrPath = getPublicUrlOrPath(
+let publicUrlOrPath = getPublicUrlOrPath(
   process.env.NODE_ENV === 'development',
   require(resolveApp('package.json')).homepage,
   process.env.PUBLIC_URL
@@ -44,6 +44,7 @@ const moduleFileExtensions = [
 ];
 
 // Resolve file paths in the same order as webpack
+// 与 webpack 一样的顺序来解析文件路径
 const resolveModule = (resolveFn, filePath) => {
   const extension = moduleFileExtensions.find(extension =>
     fs.existsSync(resolveFn(`${filePath}.${extension}`))
@@ -55,6 +56,15 @@ const resolveModule = (resolveFn, filePath) => {
 
   return resolveFn(`${filePath}.js`);
 };
+
+let appConfigPath = resolveModule(resolveApp, 'react.config');
+appConfigPath = fs.existsSync(appConfigPath) ? appConfigPath : '';
+
+module.exports.appConfigPath = appConfigPath;
+const appConfig = require('./appConfig');
+
+// 允许从 react.config 配置中获取 publicUrlOrPath
+publicUrlOrPath = process.env.PUBLIC_URL || appConfig.publicPath || publicUrlOrPath;
 
 // config after eject: we're in ./config/
 module.exports = {
@@ -83,10 +93,10 @@ const resolveOwn = relativePath => path.resolve(__dirname, '..', relativePath);
 module.exports = {
   dotenv: resolveApp('.env'),
   appPath: resolveApp('.'),
-  appBuild: resolveApp('build'),
+  appBuild: resolveApp(appConfig.outputDir || 'dist'),
   appPublic: resolveApp('public'),
-  appHtml: resolveApp('public/index.html'),
-  appIndexJs: resolveModule(resolveApp, 'src/index'),
+  appHtml: resolveApp(appConfig.appHtml || 'public/index.html'),
+  appIndexJs: resolveModule(resolveApp, appConfig.appIndexJs || 'src/index'),
   appPackageJson: resolveApp('package.json'),
   appSrc: resolveApp('src'),
   appTsConfig: resolveApp('tsconfig.json'),
@@ -102,6 +112,7 @@ module.exports = {
   ownNodeModules: resolveOwn('node_modules'), // This is empty on npm 3
   appTypeDeclarations: resolveApp('src/react-app-env.d.ts'),
   ownTypeDeclarations: resolveOwn('lib/react-app.d.ts'),
+  appConfigPath,
 };
 
 const ownPackageJson = require('../package.json');

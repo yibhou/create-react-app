@@ -39,6 +39,13 @@ const getCacheIdentifier = require('react-dev-utils/getCacheIdentifier');
 // @remove-on-eject-end
 const postcssNormalize = require('postcss-normalize');
 
+const Config = require('webpack-chain');
+const { merge } = require('webpack-merge');
+const appConfig = require('./appConfig');
+
+process.env.HOST = process.env.HOST || appConfig.devServer.host;
+process.env.PORT = process.env.PORT || appConfig.devServer.port;
+
 const appPackageJson = require(paths.appPackageJson);
 
 // Source maps are resource heavy and can cause out of memory issue for large source files.
@@ -53,6 +60,7 @@ const reactRefreshOverlayEntry = require.resolve(
 
 // Some apps do not need the benefits of saving a web request, so not inlining the chunk
 // makes for a smoother build process.
+// 是否将 runtime chunk 内联到页面中
 const shouldInlineRuntimeChunk = process.env.INLINE_RUNTIME_CHUNK !== 'false';
 
 const imageInlineSizeLimit = parseInt(
@@ -99,6 +107,9 @@ module.exports = function (webpackEnv) {
   // as %PUBLIC_URL% in `index.html` and `process.env.PUBLIC_URL` in JavaScript.
   // Omit trailing slash as %PUBLIC_URL%/xyz looks better than %PUBLIC_URL%xyz.
   // Get environment variables to inject into our app.
+  // 将 paths.publicUrlOrPath 作为 index.html 的 %PUBLIC_URL% 以及 JavaScript 的 process.env.PUBLIC_URL
+  // 由于 %PUBLIC_URL%/xyz 比 %PUBLIC_URL%xyz 更优雅些，因此去掉末尾的斜杠
+  // 获取系统环境变量并通过 DefinePlugin 注入到应用中
   const env = getClientEnvironment(paths.publicUrlOrPath.slice(0, -1));
 
   const shouldUseReactRefresh = env.raw.FAST_REFRESH;
@@ -111,6 +122,7 @@ module.exports = function (webpackEnv) {
         loader: MiniCssExtractPlugin.loader,
         // css is located in `static/css`, use '../../' to locate index.html folder
         // in production `paths.publicUrlOrPath` can be a relative path
+        // 如果 publicUrlOrPath 是相对路径，则使用 ../../ 作为前缀，这样 index.html 才能引用到 static/css 目录中的 css 资源
         options: paths.publicUrlOrPath.startsWith('.')
           ? { publicPath: '../../' }
           : {},
@@ -128,6 +140,10 @@ module.exports = function (webpackEnv) {
           // Necessary for external CSS imports to work
           // https://github.com/facebook/create-react-app/issues/2677
           ident: 'postcss',
+          // @remove-on-eject-begin
+          // 迁移到项目中的 postcss 配置文件
+          /*
+          // @remove-on-eject-end
           plugins: () => [
             require('postcss-flexbugs-fixes'),
             require('postcss-preset-env')({
@@ -141,6 +157,9 @@ module.exports = function (webpackEnv) {
             // which in turn let's users customize the target behavior as per their needs.
             postcssNormalize(),
           ],
+          // @remove-on-eject-begin
+          */
+          // @remove-on-eject-end
           sourceMap: isEnvProduction ? shouldUseSourceMap : isEnvDevelopment,
         },
       },
@@ -165,13 +184,13 @@ module.exports = function (webpackEnv) {
     return loaders;
   };
 
-  return {
+  let config = {
     mode: isEnvProduction ? 'production' : isEnvDevelopment && 'development',
     // Stop compilation early in production
     bail: isEnvProduction,
     devtool: isEnvProduction
       ? shouldUseSourceMap
-        ? 'source-map'
+        ? appConfig.productionSourceMap || 'source-map'
         : false
       : isEnvDevelopment && 'cheap-module-source-map',
     // These are the "entry points" to our application.
@@ -193,12 +212,16 @@ module.exports = function (webpackEnv) {
             //
             // When using the experimental react-refresh integration,
             // the webpack plugin takes care of injecting the dev client for us.
+            // 在保存文件时，WebpackDevServer 客户端会接收 socket 通知，然后对页面进行热更新
             webpackDevClientEntry,
             // Finally, this is your app's code:
             paths.appIndexJs,
             // We include the app code last so that if there is a runtime error during
             // initialization, it doesn't blow up the WebpackDevServer client, and
             // changing JS code would still trigger a refresh.
+            // 入口代码放在最后，目的是为了在初始化期间有运行时错误时，
+            // 不会影响到 WebpackDevServer 客户端，
+            // 当修改 JS 代码时，仍然能够触发更新
           ]
         : paths.appIndexJs,
     output: {
@@ -212,6 +235,7 @@ module.exports = function (webpackEnv) {
         ? 'static/js/[name].[contenthash:8].js'
         : isEnvDevelopment && 'static/js/bundle.js',
       // TODO: remove this when upgrading to webpack 5
+      // 升级 webpack 5 后移除
       futureEmitAssets: true,
       // There are also additional JS chunk files if you use code splitting.
       chunkFilename: isEnvProduction
@@ -304,12 +328,14 @@ module.exports = function (webpackEnv) {
       // https://twitter.com/wSokra/status/969633336732905474
       // https://medium.com/webpack/webpack-4-code-splitting-chunk-graph-and-the-splitchunks-optimization-be739a861366
       splitChunks: {
+        // 将各个 entry 的依赖模块 node_modules 分别提取到各个新的 chunk 中，而各个入口 chunk 将移除这些提取的依赖
         chunks: 'all',
         name: isEnvDevelopment,
       },
       // Keep the runtime chunk separated to enable long term caching
       // https://twitter.com/wSokra/status/969679223278505985
       // https://github.com/facebook/create-react-app/issues/5358
+      // 为各个入口 chunk 单独创建共享的运行时 bundle
       runtimeChunk: {
         name: entrypoint => `runtime-${entrypoint.name}`,
       },
@@ -345,12 +371,14 @@ module.exports = function (webpackEnv) {
       plugins: [
         // Adds support for installing with Plug'n'Play, leading to faster installs and adding
         // guards against forgotten dependencies and such.
+        // 为了减少模块安装时间，提高模块加载效率等
         PnpWebpackPlugin,
         // Prevents users from importing files from outside of src/ (or node_modules/).
         // This often causes confusion because we only process files within src/ with babel.
         // To fix this, we prevent you from importing files out of src/ -- if you'd like to,
         // please link the files into your node_modules/ and let module-resolution kick in.
         // Make sure your source files are compiled, as they will not be processed in any way.
+        // 为了阻止你从 src/ 或 node_modules/ 外面 import 文件
         new ModuleScopePlugin(paths.appSrc, [
           paths.appPackageJson,
           reactRefreshOverlayEntry,
@@ -361,6 +389,7 @@ module.exports = function (webpackEnv) {
       plugins: [
         // Also related to Plug'n'Play, but this time it tells webpack to load its loaders
         // from the current package.
+        // Plug'n'Play 优化 loader 加载
         PnpWebpackPlugin.moduleLoader(module),
       ],
     },
@@ -368,6 +397,7 @@ module.exports = function (webpackEnv) {
       strictExportPresence: true,
       rules: [
         // Disable require.ensure as it's not a standard language feature.
+        // 禁用 require.ensure 方法，因为它不是标准的语言特性
         { parser: { requireEnsure: false } },
         {
           // "oneOf" will traverse all following loaders until one will
@@ -453,8 +483,11 @@ module.exports = function (webpackEnv) {
                 // This is a feature of `babel-loader` for webpack (not Babel itself).
                 // It enables caching results in ./node_modules/.cache/babel-loader/
                 // directory for faster rebuilds.
+                // 这是 babel-loader 的特性（不是 Babel 自身的特性）
+                // 值为 true 时，允许 loader 使用默认目录 ./node_modules/.cache/babel-loader/ 缓存结果，使重新构建的效率更高
                 cacheDirectory: true,
                 // See #6846 for context on why cacheCompression is disabled
+                // 禁止 Gzip 压缩，因为文件较多时存在性能问题
                 cacheCompression: false,
                 compact: isEnvProduction,
               },
@@ -509,6 +542,10 @@ module.exports = function (webpackEnv) {
               test: cssRegex,
               exclude: cssModuleRegex,
               use: getStyleLoaders({
+                // 在 css-loader 之前首先将 loader 应用在 @import 资源上
+                // 0 => no loaders (default)
+                // 1 => postcss-loader
+                // 2 => postcss-loader, sass-loader
                 importLoaders: 1,
                 sourceMap: isEnvProduction
                   ? shouldUseSourceMap
@@ -522,6 +559,7 @@ module.exports = function (webpackEnv) {
             },
             // Adds support for CSS Modules (https://github.com/css-modules/css-modules)
             // using the extension .module.css
+            // 使用 .module.css 扩展名支持 CSS Modules
             {
               test: cssModuleRegex,
               use: getStyleLoaders({
@@ -530,6 +568,7 @@ module.exports = function (webpackEnv) {
                   ? shouldUseSourceMap
                   : isEnvDevelopment,
                 modules: {
+                  // 使用 getLocalIdent 方法生成样式的类名
                   getLocalIdent: getCSSModuleLocalIdent,
                 },
               }),
@@ -537,6 +576,7 @@ module.exports = function (webpackEnv) {
             // Opt-in support for SASS (using .scss or .sass extensions).
             // By default we support SASS Modules with the
             // extensions .module.scss or .module.sass
+            // 使用 .module.scss 或 .module.sass 扩展名支持 CSS Modules
             {
               test: sassRegex,
               exclude: sassModuleRegex,
@@ -583,6 +623,7 @@ module.exports = function (webpackEnv) {
               // its runtime that would otherwise be processed through "file" loader.
               // Also exclude `html` and `json` extensions so they get processed
               // by webpacks internal loaders.
+              // 排除 html 和 json 扩展名，使用 webpack 内置 loader 处理
               exclude: [/\.(js|mjs|jsx|ts|tsx)$/, /\.html$/, /\.json$/],
               options: {
                 name: 'static/media/[name].[hash:8].[ext]',
@@ -602,6 +643,8 @@ module.exports = function (webpackEnv) {
           {
             inject: true,
             template: paths.appHtml,
+            // 模板参数配置，可通过 <%= PUBLIC_URL %> 获取环境变量
+            templateParameters: env.raw,
           },
           isEnvProduction
             ? {
@@ -624,6 +667,7 @@ module.exports = function (webpackEnv) {
       // Inlines the webpack runtime script. This script is too small to warrant
       // a network request.
       // https://github.com/facebook/create-react-app/issues/5358
+      // 将 runtime chunk 内联到页面中
       isEnvProduction &&
         shouldInlineRuntimeChunk &&
         new InlineChunkHtmlPlugin(HtmlWebpackPlugin, [/runtime-.+[.]js/]),
@@ -632,17 +676,21 @@ module.exports = function (webpackEnv) {
       // <link rel="icon" href="%PUBLIC_URL%/favicon.ico">
       // It will be an empty string unless you specify "homepage"
       // in `package.json`, in which case it will be the pathname of that URL.
+      // 配置页面中可被使用的环境变量
       new InterpolateHtmlPlugin(HtmlWebpackPlugin, env.raw),
       // This gives some necessary context to module not found errors, such as
       // the requesting resource.
+      // 为找不到模块或资源的错误提供一些必要的上下文
       new ModuleNotFoundPlugin(paths.appPath),
       // Makes some environment variables available to the JS code, for example:
       // if (process.env.NODE_ENV === 'production') { ... }. See `./env.js`.
       // It is absolutely essential that NODE_ENV is set to production
       // during a production build.
       // Otherwise React will be compiled in the very slow development mode.
+      // 配置 JS 代码中可被使用的环境变量
       new webpack.DefinePlugin(env.stringified),
       // This is necessary to emit hot updates (CSS and Fast Refresh):
+      // 触发热更新所需插件（仅支持 CSS 热更新）
       isEnvDevelopment && new webpack.HotModuleReplacementPlugin(),
       // Experimental hot reloading for React .
       // https://github.com/facebook/react/tree/master/packages/react-refresh
@@ -662,11 +710,13 @@ module.exports = function (webpackEnv) {
       // Watcher doesn't work well if you mistype casing in a path so we use
       // a plugin that prints an error when you attempt to do this.
       // See https://github.com/facebook/create-react-app/issues/240
+      // 强制将所有被加载模块的完整路径精准地匹配真实的文件路径
       isEnvDevelopment && new CaseSensitivePathsPlugin(),
       // If you require a missing module and then `npm install` it, you still have
       // to restart the development server for webpack to discover it. This plugin
       // makes the discovery automatic so you don't have to restart.
       // See https://github.com/facebook/create-react-app/issues/186
+      // 在安装缺失模块后，webpack 不需要重启也能自动发现模块
       isEnvDevelopment &&
         new WatchMissingNodeModulesPlugin(paths.appNodeModules),
       isEnvProduction &&
@@ -705,6 +755,8 @@ module.exports = function (webpackEnv) {
       // solution that requires the user to opt into importing specific locales.
       // https://github.com/jmblog/how-to-optimize-momentjs-with-webpack
       // You can remove this if you don't use Moment.js:
+      // Moment.js 默认引入了所有的本地化文件，这导致很多没用的本地化文件被打包进来
+      // 这里忽略所有的本地化文件，因此直接在你的代码中引入所需的本地化文件即可
       new webpack.IgnorePlugin(/^\.\/locale$/, /moment$/),
       // Generate a service worker script that will precache, and keep up to date,
       // the HTML & assets that are part of the webpack build.
@@ -776,6 +828,9 @@ module.exports = function (webpackEnv) {
     ].filter(Boolean),
     // Some libraries import Node modules but don't use them in the browser.
     // Tell webpack to provide empty mocks for them so importing them works.
+    // 有些依赖所 import 的 node 模块不能在浏览器上使用，所以 webpack 需要知道如何处理这些模块
+    // empty 表示提供一个空对象
+    // mock 表示提供一个实现部分接口 mock 对象
     node: {
       module: 'empty',
       dgram: 'empty',
@@ -788,6 +843,33 @@ module.exports = function (webpackEnv) {
     },
     // Turn off performance processing because we utilize
     // our own hints via the FileSizeReporter
+    // 如果资源文件超过特定的大小限制，则 webpack 会打印一些性能提示信息
+    // 这里禁用 webpack 的性能提示，因为我们使用 FileSizeReporter 打印自己的提示信息
     performance: false,
   };
+
+  const resolveChainableWebpackConfig = () => {
+    const chainableConfig = new Config();
+    const webpackChainFn = appConfig.chainWebpack;
+    if (typeof webpackChainFn === 'function') {
+      webpackChainFn(chainableConfig);
+    }
+    return chainableConfig;
+  };
+  const resolveWebpackConfig = () => {
+    const chainableConfig = resolveChainableWebpackConfig();
+    config = merge(config, chainableConfig.toConfig());
+
+    const webpackRawConfigFn = appConfig.configureWebpack;
+    if (typeof webpackRawConfigFn === 'function') {
+      const res = webpackRawConfigFn(config);
+      if (res) {
+        config = merge(config, res);
+      }
+    } else if (webpackRawConfigFn) {
+      config = merge(config, webpackRawConfigFn);
+    }
+    return config;
+  };
+  return resolveWebpackConfig();
 };
